@@ -1,0 +1,10 @@
+[package]
+name = "grobs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy_app = "0.15.0"
+bevy_ecs = "0.15.0"
+bevy_render = "0.15.0"
+bevy_utils = "0.15.0"
