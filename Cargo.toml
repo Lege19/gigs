@@ -1,7 +1,14 @@
 [package]
-name = "grobs"
+name = "gigs"
 version = "0.1.0"
 edition = "2021"
+categories = ["game-engines", "graphics", "rendering", "shaders"]
+keywords = ["game", "engine", "gamedev", "graphics", "bevy", "shaders"]
+description = "Intermittent graphics jobs for the Bevy Game Engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ecoskey/gigs"
+rust-version = "1.83.0"
+
 
 [dependencies]
 bevy_app = "0.15.0"

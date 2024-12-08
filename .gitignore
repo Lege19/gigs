@@ -1,1 +1,11 @@
 /target
+
+# Cargo 
+Cargo.lock
+
+# IDE files
+/.idea
+/.vscode
+.zed
+dxcompiler.dll
+dxil.dll
