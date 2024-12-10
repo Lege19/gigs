@@ -10,11 +10,10 @@ use bevy_utils::hashbrown;
 use super::JobId;
 
 #[derive(Component, Default)]
-#[require(JobPriority, /*JobDependencies*/)]
+#[require(JobPriority, ComputedPriority, JobDependencies)]
 pub struct JobMarker;
 
 #[derive(Copy, Clone, Component, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-//#[require(ComputedPriority)]
 pub struct JobPriority(pub Priority);
 
 #[derive(Copy, Clone, Component, Default, PartialEq, Eq)]

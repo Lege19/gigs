@@ -9,6 +9,8 @@ use bevy_ecs::{
     system::{Commands, Local, ParamSet, Query, Res, ResMut, Resource},
     world::{EntityRef, World},
 };
+use bevy_render::render_resource::CommandEncoder;
+use bevy_render::render_resource::CommandEncoderDescriptor;
 use bevy_render::renderer::RenderDevice;
 use bevy_render::renderer::RenderQueue;
 
@@ -24,12 +26,14 @@ impl DynamicJob {
         entity: EntityRef,
         world: &World,
         render_device: &RenderDevice,
-    ) -> Result<CommandBuffer, JobError> {
-        (&self.0)(entity, world, render_device)
+        commands: &mut CommandEncoder,
+    ) -> Result<(), JobError> {
+        (self.0)(entity, world, render_device, commands)
     }
 }
 
-type ErasedJobFn = fn(EntityRef, &World, &RenderDevice) -> Result<CommandBuffer, JobError>;
+type ErasedJobFn =
+    fn(EntityRef, &World, &RenderDevice, &mut CommandEncoder) -> Result<(), JobError>;
 
 pub fn erase_jobs<J: GraphicsJob>(
     query: Query<Entity, (With<J>, Without<DynamicJob>)>,
@@ -47,7 +51,8 @@ fn erased_job<J: GraphicsJob>(
     entity: EntityRef,
     world: &World,
     render_device: &RenderDevice,
-) -> Result<CommandBuffer, JobError> {
+    commands: &mut CommandEncoder,
+) -> Result<(), JobError> {
     let Some((job, input_data)) = entity.get_components::<(&J, <J::In as JobInput<J>>::Data)>()
     else {
         return Err(JobError);
@@ -55,12 +60,13 @@ fn erased_job<J: GraphicsJob>(
 
     let input = <J::In as JobInput<J>>::get(input_data, world);
 
-    job.run(world, render_device, input)
+    job.run(world, render_device, commands, input)
 }
 
 #[derive(Resource)]
 struct CompletedJobs(Vec<(Entity, Result<(), JobError>)>);
 
+#[allow(clippy::type_complexity)]
 fn run_jobs(
     mut params: ParamSet<(
         (
@@ -71,11 +77,10 @@ fn run_jobs(
         ),
         (Res<RenderQueue>, ResMut<CompletedJobs>),
     )>,
-    mut command_buffers: Local<Vec<CommandBuffer>>,
+    mut command_encoders: Local<Vec<CommandEncoder>>,
     mut local_completed: Local<Vec<(Entity, Result<(), JobError>)>>,
 ) {
     local_completed.clear();
-    command_buffers.clear();
 
     let (jobs, render_device, job_exec_settings, world) = params.p0();
 
@@ -92,9 +97,11 @@ fn run_jobs(
             });
 
     for (entity_ref, job, _) in sorted_jobs {
-        match job.run(entity_ref, world, &render_device) {
-            Ok(buf) => {
-                command_buffers.push(buf);
+        let mut commands =
+            render_device.create_command_encoder(&CommandEncoderDescriptor { label: None });
+        match job.run(entity_ref, world, &render_device, &mut commands) {
+            Ok(()) => {
+                command_encoders.push(commands);
                 local_completed.push((entity_ref.id(), Ok(())));
             }
             Err(err) => local_completed.push((entity_ref.id(), Err(err))),
@@ -104,5 +111,5 @@ fn run_jobs(
     let (render_queue, mut completed_jobs) = params.p1();
     mem::swap(&mut *local_completed, &mut completed_jobs.0);
 
-    render_queue.submit(command_buffers.drain(..));
+    render_queue.submit(command_encoders.drain(..).map(|cmd| cmd.finish()));
 }
