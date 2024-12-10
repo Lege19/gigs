@@ -1,4 +1,4 @@
-extern crate alloc;
+#![allow(clippy::type_complexity)]
 
 mod app;
 mod input;
@@ -43,7 +43,6 @@ impl Plugin for GraphicsJobsPlugin {
 
 pub enum GraphicsJobSet {
     Check,
-
     Execute,
     Cleanup,
 }

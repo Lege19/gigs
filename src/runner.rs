@@ -13,9 +13,10 @@ use bevy_render::render_resource::CommandEncoder;
 use bevy_render::render_resource::CommandEncoderDescriptor;
 use bevy_render::renderer::RenderDevice;
 use bevy_render::renderer::RenderQueue;
+use bevy_render::sync_world::MainEntity;
 
 use super::JobExecutionSettings;
-use super::{ComputedPriority, GraphicsJob, JobError, JobInput, JobPriority};
+use super::{ComputedPriority, GraphicsJob, JobError, JobInput};
 
 #[derive(Copy, Clone, Component)]
 pub struct DynamicJob(ErasedJobFn);
@@ -66,7 +67,6 @@ fn erased_job<J: GraphicsJob>(
 #[derive(Resource)]
 struct CompletedJobs(Vec<(Entity, Result<(), JobError>)>);
 
-#[allow(clippy::type_complexity)]
 fn run_jobs(
     mut params: ParamSet<(
         (
