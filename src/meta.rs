@@ -1,47 +1,61 @@
 use std::{
     cmp::Ordering,
+    collections::VecDeque,
     iter::Sum,
     num::NonZero,
     ops::{Add, AddAssign},
 };
 
-use bevy_ecs::{component::Component, entity::EntityHash};
+use bevy_ecs::{
+    component::{Component, ComponentId},
+    entity::{Entity, EntityHash, EntityHashSet},
+    world::{DeferredWorld, Mut},
+};
 use bevy_utils::hashbrown;
-
-use super::JobId;
 
 #[derive(Component, Default)]
 #[require(JobPriority, ComputedPriority, JobDependencies)]
 pub struct JobMarker;
 
 #[derive(Copy, Clone, Component, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[require(ComputedPriority, JobDependencies)]
+#[component(on_insert = propagate_priority)]
 pub struct JobPriority(pub Priority);
 
-#[derive(Copy, Clone, Component, Default, PartialEq, Eq)]
-pub struct ComputedPriority {
-    priority: Priority,
-    stall_frames: u32,
+// simple breadth-first traversal to compute priorities
+fn propagate_priority(mut world: DeferredWorld, root: Entity, _: ComponentId) {
+    let root_priority = world.entity(root).get::<JobPriority>().unwrap().0;
+    let mut descendants = VecDeque::new();
+    descendants.push_back(root);
+    let mut visited = EntityHashSet::default();
+
+    while let Some(descendant) = descendants.pop_front() {
+        if visited.contains(&descendant) {
+            continue;
+        }
+        visited.insert(descendant);
+
+        let mut descendant_mut = world.entity_mut(descendant);
+        if let Some(mut priority) = descendant_mut.get_mut::<ComputedPriority>() {
+            priority.0 += root_priority;
+        }
+
+        if let Some(JobDependencies(deps)) = descendant_mut.get::<JobDependencies>() {
+            descendants.extend(deps.iter());
+        }
+    }
 }
+
+#[derive(Copy, Clone, Component, Default)]
+pub(crate) struct ComputedPriority(pub Priority);
 
 impl ComputedPriority {
     pub fn priority(&self) -> Priority {
-        self.priority
+        self.0
     }
 
     pub fn is_critical(&self) -> bool {
-        self.priority == Priority::Critical
-    }
-}
-
-impl PartialOrd for ComputedPriority {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ComputedPriority {
-    fn cmp(&self, other: &Self) -> Ordering {
-        todo!()
+        self.0 == Priority::Critical
     }
 }
 
@@ -105,16 +119,16 @@ impl AddAssign for Priority {
 }
 
 #[derive(Clone, Default, Component)]
-pub struct JobDependencies(pub(super) hashbrown::HashSet<JobId, EntityHash>);
+pub struct JobDependencies(pub(super) hashbrown::HashSet<Entity, EntityHash>);
 
-impl FromIterator<JobId> for JobDependencies {
-    fn from_iter<T: IntoIterator<Item = JobId>>(iter: T) -> Self {
+impl FromIterator<Entity> for JobDependencies {
+    fn from_iter<T: IntoIterator<Item = Entity>>(iter: T) -> Self {
         Self(hashbrown::HashSet::from_iter(iter))
     }
 }
 
 impl JobDependencies {
-    pub fn new(iter: impl IntoIterator<Item = JobId>) -> Self {
+    pub fn new(iter: impl IntoIterator<Item = Entity>) -> Self {
         Self::from_iter(iter)
     }
 }
@@ -123,7 +137,9 @@ impl JobDependencies {
 mod test {
     use std::{iter, num::NonZero};
 
-    use super::Priority;
+    use bevy_ecs::world::World;
+
+    use super::{JobPriority, Priority};
 
     fn or_min(num: u32) -> NonZero<u32> {
         NonZero::new(num).unwrap_or(NonZero::<u32>::MIN)
@@ -159,8 +175,7 @@ mod test {
     fn priority_sum_critical_left() {
         const COUNT: u32 = 20;
         let priorities = non_criticals(iter::repeat(1).take(COUNT as usize));
-        let sum =
-            sum_priorities(iter::once(Priority::Critical).chain(priorities.into_iter())).unwrap();
+        let sum = sum_priorities(iter::once(Priority::Critical).chain(priorities)).unwrap();
         assert_eq!(sum, Priority::Critical);
     }
 
@@ -171,5 +186,12 @@ mod test {
         let sum =
             sum_priorities(priorities.into_iter().chain(iter::once(Priority::Critical))).unwrap();
         assert_eq!(sum, Priority::Critical);
+    }
+
+    #[test]
+    fn propagate_priority_simple() {
+        let mut world = World::new();
+
+        let a = world.spawn((JobPriority::))
     }
 }

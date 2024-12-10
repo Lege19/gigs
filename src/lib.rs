@@ -32,8 +32,6 @@ pub struct GraphicsJobsPlugin {
 
 impl Plugin for GraphicsJobsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostUpdate, compute_priorities);
-
         app.insert_resource(self.settings);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(ExtractSchedule, extract_job_meta);
@@ -92,19 +90,6 @@ pub trait GraphicsJob: Component + Clone {
     ) -> Result<(), JobError>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct JobId(Entity);
-
-impl JobId {
-    pub fn new_unchecked(id: Entity) -> Self {
-        Self(id)
-    }
-
-    pub fn id(&self) -> Entity {
-        self.0
-    }
-}
-
 fn extract_jobs<J: GraphicsJob>(
     jobs: Extract<Query<(RenderEntity, &J), Added<JobMarker>>>,
     mut commands: Commands,
@@ -151,7 +136,5 @@ enum JobStatus {
     Ready,
     Done,
 }
-
-fn compute_priorities(jobs: Query<(&JobPriority, &JobDependencies)>) {}
 
 fn check_dependencies(mut commands: Commands) {}
