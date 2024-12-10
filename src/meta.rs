@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    iter::Sum,
     num::NonZero,
     ops::{Add, AddAssign},
 };
@@ -115,5 +116,60 @@ impl FromIterator<JobId> for JobDependencies {
 impl JobDependencies {
     pub fn new(iter: impl IntoIterator<Item = JobId>) -> Self {
         Self::from_iter(iter)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{iter, num::NonZero};
+
+    use super::Priority;
+
+    fn or_min(num: u32) -> NonZero<u32> {
+        NonZero::new(num).unwrap_or(NonZero::<u32>::MIN)
+    }
+
+    fn non_criticals(weights: impl IntoIterator<Item = u32>) -> Vec<Priority> {
+        weights
+            .into_iter()
+            .map(|num| Priority::NonCritical(or_min(num)))
+            .collect()
+    }
+
+    fn sum_priorities(priorities: impl IntoIterator<Item = Priority>) -> Option<Priority> {
+        priorities.into_iter().reduce(|a, b| a + b)
+    }
+
+    #[test]
+    fn priority_sum() {
+        let priorities = non_criticals([1, 2, 3, 4, 5]);
+        let sum = sum_priorities(priorities).unwrap();
+        assert_eq!(sum, Priority::NonCritical(or_min(15)));
+    }
+
+    #[test]
+    fn priority_sum_ones() {
+        const COUNT: u32 = 20;
+        let priorities = non_criticals(iter::repeat(1).take(COUNT as usize));
+        let sum = sum_priorities(priorities).unwrap();
+        assert_eq!(sum, Priority::NonCritical(or_min(COUNT)));
+    }
+
+    #[test]
+    fn priority_sum_critical_left() {
+        const COUNT: u32 = 20;
+        let priorities = non_criticals(iter::repeat(1).take(COUNT as usize));
+        let sum =
+            sum_priorities(iter::once(Priority::Critical).chain(priorities.into_iter())).unwrap();
+        assert_eq!(sum, Priority::Critical);
+    }
+
+    #[test]
+    fn priority_sum_critical_right() {
+        const COUNT: u32 = 20;
+        let priorities = non_criticals(iter::repeat(1).take(COUNT as usize));
+        let sum =
+            sum_priorities(priorities.into_iter().chain(iter::once(Priority::Critical))).unwrap();
+        assert_eq!(sum, Priority::Critical);
     }
 }
