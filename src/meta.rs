@@ -22,7 +22,7 @@ pub struct JobMarker;
 #[component(on_insert = propagate_priority)]
 pub struct JobPriority(pub Priority);
 
-// simple breadth-first traversal to compute priorities
+// simple breadth-first traversal to propagate priorities to depedencies
 fn propagate_priority(mut world: DeferredWorld, root: Entity, _: ComponentId) {
     let root_priority = world.entity(root).get::<JobPriority>().unwrap().0;
     let mut descendants = VecDeque::new();
@@ -34,6 +34,13 @@ fn propagate_priority(mut world: DeferredWorld, root: Entity, _: ComponentId) {
             continue;
         }
         visited.insert(descendant);
+
+        if !world.entity(descendant).contains::<ComputedPriority>() {
+            world
+                .commands()
+                .entity(descendant)
+                .insert(ComputedPriority(root_priority));
+        }
 
         let mut descendant_mut = world.entity_mut(descendant);
         if let Some(mut priority) = descendant_mut.get_mut::<ComputedPriority>() {
@@ -192,6 +199,6 @@ mod test {
     fn propagate_priority_simple() {
         let mut world = World::new();
 
-        let a = world.spawn((JobPriority::))
+        todo!()
     }
 }
