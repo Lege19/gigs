@@ -26,6 +26,7 @@ use bevy_render::{
 };
 use bevy_render::{sync_world::RenderEntity, Extract};
 
+#[derive(Default)]
 pub struct GraphicsJobsPlugin {
     settings: JobExecutionSettings,
 }
@@ -49,6 +50,15 @@ pub enum GraphicsJobSet {
 pub struct JobExecutionSettings {
     pub max_jobs_per_frame: u32,
     pub max_job_stall_frames: u32,
+}
+
+impl Default for JobExecutionSettings {
+    fn default() -> Self {
+        Self {
+            max_jobs_per_frame: 16,
+            max_job_stall_frames: 16,
+        }
+    }
 }
 
 pub struct SpecializedGraphicsJobPlugin<J: GraphicsJob>(PhantomData<J>);

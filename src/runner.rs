@@ -74,26 +74,23 @@ struct JobSortLens<'a> {
     stall: &'a StalledFrames,
 }
 
-impl<'w, 's> PartialEq for JobSortLensItem<'w, 's> {
+impl PartialEq for JobSortLensItem<'_, '_> {
     fn eq(&self, other: &Self) -> bool {
-        match (self.priority.0, other.priority.0) {
-            (Priority::Critical, Priority::Critical) => true,
-            _ => self.priority.0 == other.priority.0 && self.stall.0 == other.stall.0,
-        }
+        self.priority.priority() == other.priority.priority() && self.stall.0 == other.stall.0
     }
 }
 
-impl<'w, 's> Eq for JobSortLensItem<'w, 's> {}
+impl Eq for JobSortLensItem<'_, '_> {}
 
-impl<'w, 's> PartialOrd for JobSortLensItem<'w, 's> {
+impl PartialOrd for JobSortLensItem<'_, '_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'w, 's> Ord for JobSortLensItem<'w, 's> {
+impl Ord for JobSortLensItem<'_, '_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        match (self.priority.0, other.priority.0) {
+        match (self.priority.priority(), other.priority.priority()) {
             (Priority::Critical, Priority::Critical) => Ordering::Equal,
             (Priority::Critical, Priority::NonCritical(_)) => Ordering::Greater,
             (Priority::NonCritical(_), Priority::Critical) => Ordering::Less,
@@ -132,16 +129,15 @@ fn run_jobs(
 
     let (jobs, render_device, job_exec_settings, world) = params.p0();
 
-    let mut job_count: u32 = 0;
     let sorted_jobs = jobs
         .iter()
         .sort::<JobSortLens>()
         .rev()
-        .take_while(|(_, _, priority, _)| {
-            let cont = priority.is_critical() || job_count < job_exec_settings.max_jobs_per_frame;
-            job_count += 1;
-            cont
-        });
+        .enumerate()
+        .take_while(|(i, (_, _, priority, _))| {
+            priority.is_critical() || (*i as u32) < job_exec_settings.max_jobs_per_frame
+        })
+        .map(|(_, a)| a);
 
     for (entity_ref, job, _, _) in sorted_jobs {
         let mut commands =

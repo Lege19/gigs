@@ -15,8 +15,9 @@ use bevy_render::{
     extract_component::{ExtractComponent, ExtractComponentPlugin},
     render_resource::{
         AsBindGroup, BindGroupLayout, CachedComputePipelineId, CachedPipelineState,
-        CachedRenderPipelineId, PipelineCache, PreparedBindGroup, SpecializedComputePipeline,
-        SpecializedComputePipelines, SpecializedRenderPipeline, SpecializedRenderPipelines,
+        CachedRenderPipelineId, ComputePipeline, PipelineCache, PreparedBindGroup, RenderPipeline,
+        SpecializedComputePipeline, SpecializedComputePipelines, SpecializedRenderPipeline,
+        SpecializedRenderPipelines,
     },
     renderer::RenderDevice,
     sync_world::MainEntity,
@@ -217,7 +218,7 @@ pub struct JobRenderPipeline<P: SpecializedJobRenderPipeline>(pub P::Key);
 impl<J: GraphicsJob, P: SpecializedJobRenderPipeline> JobInput<J> for JobRenderPipeline<P> {
     type Data = Read<JobRenderPipelineId<P>>;
 
-    type Item<'a> = CachedRenderPipelineId;
+    type Item<'a> = &'a RenderPipeline;
 
     fn plugin() -> impl Plugin {
         JobRenderPipelinePlugin::<P>(PhantomData)
@@ -236,8 +237,11 @@ impl<J: GraphicsJob, P: SpecializedJobRenderPipeline> JobInput<J> for JobRenderP
         }
     }
 
-    fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
-        data.0
+    fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a> {
+        world
+            .resource::<PipelineCache>()
+            .get_render_pipeline(data.0)
+            .expect("pipeline should be ready by this point")
     }
 }
 
@@ -313,7 +317,7 @@ pub struct JobComputePipeline<P: SpecializedJobComputePipeline>(P::Key);
 impl<J: GraphicsJob, P: SpecializedJobComputePipeline> JobInput<J> for JobComputePipeline<P> {
     type Data = Read<JobComputePipelineId<P>>;
 
-    type Item<'a> = CachedComputePipelineId;
+    type Item<'a> = &'a ComputePipeline;
 
     fn plugin() -> impl Plugin {
         JobComputePipelinePlugin::<P>(PhantomData)
@@ -332,8 +336,11 @@ impl<J: GraphicsJob, P: SpecializedJobComputePipeline> JobInput<J> for JobComput
         }
     }
 
-    fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
-        data.0
+    fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a> {
+        world
+            .resource::<PipelineCache>()
+            .get_compute_pipeline(data.0)
+            .expect("pipeline should be ready by this point")
     }
 }
 

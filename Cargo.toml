@@ -15,3 +15,6 @@ bevy_app = "0.15.0"
 bevy_ecs = "0.15.0"
 bevy_render = "0.15.0"
 bevy_utils = "0.15.0"
+
+[dev-dependencies]
+bevy = "0.15.0"
