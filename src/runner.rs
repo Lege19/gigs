@@ -1,17 +1,10 @@
 use core::iter;
-use core::mem;
-use std::cmp::Ordering;
-use std::num::NonZero;
 
-use bevy_app::{App, Plugin};
-use bevy_ecs::query::Or;
-use bevy_ecs::query::QueryData;
-use bevy_ecs::system::EntityCommands;
 use bevy_ecs::{
     component::Component,
-    entity::{Entity, EntityHashMap},
+    entity::Entity,
     query::{With, Without},
-    system::{Commands, Local, ParamSet, Query, Res, ResMut, Resource},
+    system::{Commands, Local, Query, Res, Resource},
     world::{EntityRef, World},
 };
 use bevy_render::render_resource::CommandEncoder;
@@ -19,31 +12,32 @@ use bevy_render::render_resource::CommandEncoderDescriptor;
 use bevy_render::renderer::RenderDevice;
 use bevy_render::renderer::RenderQueue;
 use bevy_render::sync_world::MainEntity;
-use bevy_render::Extract;
+use crossbeam_channel::Receiver;
+use crossbeam_channel::Sender;
 use disqualified::ShortName;
 
-use crate::JobComplete;
-use crate::JobInputStatus;
-use crate::JobMarker;
-use crate::JobPriority;
-use crate::JobStatus;
+use crate::{JobComplete, JobInputStatus, JobMarker, JobPriority};
 
 use super::JobExecutionSettings;
 use super::{GraphicsJob, JobError, JobInput};
 
 #[derive(Copy, Clone, Component)]
 pub struct DynamicJob {
-    run: fn(EntityRef, &World, &RenderDevice, &mut CommandEncoder) -> Result<(), JobError>,
-    status: fn(EntityRef, &World) -> JobInputStatus,
     label: ShortName<'static>,
+    status: fn(EntityRef, &World) -> JobInputStatus,
+    run: fn(EntityRef, &World, &RenderDevice, &mut CommandEncoder) -> Result<(), JobError>,
 }
 
 impl DynamicJob {
     pub fn new<J: GraphicsJob>() -> Self {
-        let run = erased_run::<J>;
-        let status = erased_status::<J>;
         let label = J::label();
-        Self { run, status, label }
+        let status = erased_status::<J>;
+        let run = erased_run::<J>;
+        Self { label, status, run }
+    }
+
+    pub fn label(&self) -> ShortName<'static> {
+        self.label
     }
 
     pub fn status(&self, entity: EntityRef, world: &World) -> JobInputStatus {
@@ -55,13 +49,9 @@ impl DynamicJob {
         entity: EntityRef,
         world: &World,
         render_device: &RenderDevice,
-        commands: &mut CommandEncoder,
+        command_encoder: &mut CommandEncoder,
     ) -> Result<(), JobError> {
-        (self.run)(entity, world, render_device, commands)
-    }
-
-    pub fn label(&self) -> ShortName<'static> {
-        self.label
+        (self.run)(entity, world, render_device, command_encoder)
     }
 }
 
@@ -104,19 +94,13 @@ pub fn erase_jobs<J: GraphicsJob>(
 #[derive(Component, Copy, Clone)]
 pub(super) struct FramesStalled(u32);
 
-pub(super) fn setup_job_misc_components(
-    jobs: Query<
-        Entity,
-        (
-            With<JobMarker>,
-            Or<(Without<FramesStalled>, Without<JobStatus>)>,
-        ),
-    >,
+pub(super) fn setup_stalled_frames(
+    jobs: Query<Entity, (With<JobMarker>, Without<FramesStalled>)>,
     mut commands: Commands,
 ) {
     let to_insert = jobs
         .iter()
-        .zip(iter::repeat((FramesStalled(0), JobStatus::Waiting)))
+        .zip(iter::repeat(FramesStalled(0)))
         .collect::<Vec<_>>();
     commands.insert_batch(to_insert);
 }
@@ -124,7 +108,7 @@ pub(super) fn setup_job_misc_components(
 pub(super) fn cancel_stalled_jobs(
     jobs: Query<(Entity, Option<&MainEntity>, &FramesStalled)>,
     exec_settings: Res<JobExecutionSettings>,
-    mut completed_jobs: ResMut<CompletedJobs>,
+    completed_jobs: Res<JobResultSender>,
     mut commands: Commands,
 ) {
     jobs.iter()
@@ -132,7 +116,12 @@ pub(super) fn cancel_stalled_jobs(
         .for_each(|(id, main_id, _)| {
             completed_jobs
                 .0
-                .push((id, main_id.copied(), Err(JobError::Stalled)));
+                .send(JobResult {
+                    entity: id,
+                    main_entity: main_id.copied(),
+                    result: Err(JobError::Stalled),
+                })
+                .unwrap();
             commands.entity(id).despawn();
         });
 }
@@ -141,38 +130,78 @@ pub(super) fn increment_frames_stalled(mut jobs: Query<&mut FramesStalled>) {
     jobs.iter_mut().for_each(|mut frames| frames.0 += 1);
 }
 
+#[derive(Copy, Clone, Component)]
+pub struct JobReady;
+
 pub(super) fn check_job_inputs(
-    jobs: Query<(EntityRef, &DynamicJob, &JobStatus)>,
+    jobs: Query<(EntityRef, Option<&MainEntity>, &DynamicJob), Without<JobReady>>,
     world: &World,
+    job_result_sender: Res<JobResultSender>,
     mut commands: Commands,
 ) {
-    jobs.iter()
-        .filter(|(_, _, status)| **status == JobStatus::Waiting)
-        .for_each(|(entity, job, _)| match job.status(entity, world) {
-            JobInputStatus::Ready => {commands.entity(entity.id()).insert(JobStatus::Ready); },
-            JobInputStatus::Wait => {},
-            JobInputStatus::Fail => {
-                todo!("need to handle failure here, despite not having mutable access to CompletedJobs")
+    let to_insert = jobs
+        .iter()
+        .filter_map(
+            |(entity, main_entity, job)| match job.status(entity, world) {
+                JobInputStatus::Ready => Some(entity.id()),
+                JobInputStatus::Wait => None,
+                JobInputStatus::Fail => {
+                    job_result_sender
+                        .0
+                        .send(JobResult {
+                            entity: entity.id(),
+                            main_entity: main_entity.copied(),
+                            result: Err(JobError::InputsNotSatisfied),
+                        })
+                        .unwrap();
+                    None
+                }
             },
-        });
+        )
+        .zip(iter::repeat(JobReady))
+        .collect::<Vec<_>>();
+    commands.insert_batch(to_insert)
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct JobResult {
+    entity: Entity,
+    main_entity: Option<MainEntity>,
+    result: Result<(), JobError>,
 }
 
 #[derive(Resource)]
-pub(super) struct CompletedJobs(Vec<(Entity, Option<MainEntity>, Result<(), JobError>)>);
+pub(super) struct JobResultReceiver(pub Receiver<JobResult>);
+#[derive(Resource)]
+pub(super) struct JobResultSender(pub Sender<JobResult>);
+
+#[derive(Resource)]
+pub(super) struct JobResultMainWorldReceiver(pub Receiver<JobResult>);
+#[derive(Resource)]
+pub(super) struct JobResultMainWorldSender(pub Sender<JobResult>);
 
 pub(super) fn sync_completed_jobs(
-    mut completed_jobs: ResMut<CompletedJobs>,
+    job_result_receiver: Res<JobResultReceiver>,
+    main_job_result_sender: Res<JobResultMainWorldSender>,
     mut commands: Commands,
-    mut main_commands: Extract<Commands>,
 ) {
-    for (id, main_id, res) in completed_jobs.0.drain(..) {
-        commands.trigger_targets(JobComplete(res), id);
-        if let Some(mut entity) = commands.get_entity(id) {
+    while let Ok(job) = job_result_receiver.0.try_recv() {
+        main_job_result_sender.0.send(job).unwrap();
+        commands.trigger_targets(JobComplete(job.result), job.entity);
+        if let Some(mut entity) = commands.get_entity(job.entity) {
             entity.despawn();
         }
-        if let Some(main_id) = main_id {
-            main_commands.trigger_targets(JobComplete(res), id);
-            if let Some(mut entity) = commands.get_entity(main_id.id()) {
+    }
+}
+
+pub(super) fn sync_completed_jobs_main_world(
+    job_result_receiver: Res<JobResultMainWorldReceiver>,
+    mut commands: Commands,
+) {
+    while let Ok(job) = job_result_receiver.0.try_recv() {
+        if let Some(main_entity) = job.main_entity {
+            commands.trigger_targets(JobComplete(job.result), main_entity.id());
+            if let Some(mut entity) = commands.get_entity(main_entity.id()) {
                 entity.despawn();
             }
         }
@@ -180,53 +209,43 @@ pub(super) fn sync_completed_jobs(
 }
 
 pub(super) fn run_jobs(
-    mut params: ParamSet<(
-        (
-            Query<(
-                EntityRef,
-                Option<&MainEntity>,
-                &DynamicJob,
-                &JobPriority,
-                &JobStatus,
-            )>,
-            Res<RenderDevice>,
-            Res<JobExecutionSettings>,
-            &World,
-        ),
-        (Res<RenderQueue>, ResMut<CompletedJobs>),
-    )>,
+    jobs: Query<(EntityRef, Option<&MainEntity>, &DynamicJob, &JobPriority), With<JobReady>>,
+    world: &World,
+    render_device: Res<RenderDevice>,
+    render_queue: Res<RenderQueue>,
+    exec_settings: Res<JobExecutionSettings>,
+    job_result_sender: Res<JobResultSender>,
     mut command_encoders: Local<Vec<CommandEncoder>>,
-    mut local_completed: Local<Vec<(Entity, Option<MainEntity>, Result<(), JobError>)>>,
 ) {
-    local_completed.clear();
-
-    let (jobs, render_device, job_exec_settings, world) = params.p0();
-
     let sorted_jobs = jobs
         .iter()
         .sort::<&JobPriority>()
         .rev()
-        .filter(|(_, _, _, _, status)| **status == JobStatus::Ready)
         .enumerate()
-        .take_while(|(i, (_, _, _, priority, _))| {
-            priority.is_critical() || (*i as u32) < job_exec_settings.max_jobs_per_frame
+        .take_while(|(i, (_, _, _, priority))| {
+            priority.is_critical() || (*i as u32) < exec_settings.max_jobs_per_frame
         })
         .map(|(_, a)| a);
 
-    for (entity_ref, main_entity, job, _, _) in sorted_jobs {
-        let mut command_encoder =
-            render_device.create_command_encoder(&CommandEncoderDescriptor { label: None });
-        match job.run(entity_ref, world, &render_device, &mut command_encoder) {
-            Ok(()) => {
-                command_encoders.push(command_encoder);
-                local_completed.push((entity_ref.id(), main_entity.copied(), Ok(())));
-            }
-            Err(err) => local_completed.push((entity_ref.id(), main_entity.copied(), Err(err))),
-        }
-    }
+    for (entity_ref, main_entity, job, _) in sorted_jobs {
+        let mut command_encoder = render_device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some(job.label().original()),
+        });
 
-    let (render_queue, mut completed_jobs) = params.p1();
-    mem::swap(&mut *local_completed, &mut completed_jobs.0);
+        let result = job.run(entity_ref, world, &render_device, &mut command_encoder);
+        if result.is_ok() {
+            command_encoders.push(command_encoder);
+        }
+
+        job_result_sender
+            .0
+            .send(JobResult {
+                entity: entity_ref.id(),
+                main_entity: main_entity.copied(),
+                result,
+            })
+            .unwrap();
+    }
 
     render_queue.submit(command_encoders.drain(..).map(|cmd| cmd.finish()));
 }

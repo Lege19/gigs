@@ -281,12 +281,18 @@ impl<P: SpecializedJobRenderPipeline> Plugin for JobRenderPipelinePlugin<P> {
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
-                .init_resource::<P>()
                 .init_resource::<SpecializedRenderPipelines<P>>()
                 .add_systems(
                     Render,
                     queue_job_render_pipelines::<P>.in_set(RenderSet::Queue),
                 );
+        }
+    }
+
+    fn finish(&self, app: &mut App) {
+        // do nothing
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.init_resource::<P>();
         }
     }
 }
@@ -384,12 +390,18 @@ impl<P: SpecializedJobComputePipeline> Plugin for JobComputePipelinePlugin<P> {
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
-                .init_resource::<P>()
                 .init_resource::<SpecializedComputePipelines<P>>()
                 .add_systems(
                     Render,
                     queue_job_compute_pipelines::<P>.in_set(RenderSet::Queue),
                 );
+        }
+    }
+
+    fn finish(&self, app: &mut App) {
+        // do nothing
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.init_resource::<P>();
         }
     }
 }

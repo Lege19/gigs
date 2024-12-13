@@ -1,21 +1,22 @@
 #![allow(clippy::type_complexity)]
 
-mod app;
+mod ext;
 mod input;
 mod meta;
 mod runner;
-pub use app::*;
 use disqualified::ShortName;
+pub use ext::*;
 pub use input::*;
 pub use meta::*;
 use runner::{
     cancel_stalled_jobs, check_job_inputs, erase_jobs, increment_frames_stalled, run_jobs,
-    setup_job_misc_components, sync_completed_jobs,
+    setup_stalled_frames, sync_completed_jobs, sync_completed_jobs_main_world,
+    JobResultMainWorldReceiver, JobResultMainWorldSender, JobResultReceiver, JobResultSender,
 };
 
 use core::marker::PhantomData;
 
-use bevy_app::{App, Plugin};
+use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::{
     component::Component,
     event::Event,
@@ -33,6 +34,25 @@ use bevy_render::{
 };
 use bevy_render::{sync_world::RenderEntity, Extract};
 
+/// A trait for components describing a unit of rendering work.
+///
+///
+pub trait GraphicsJob: Component + Clone {
+    type In: JobInput<Self>;
+
+    fn label() -> ShortName<'static> {
+        ShortName::of::<Self>()
+    }
+
+    fn run(
+        &self,
+        world: &World,
+        render_device: &RenderDevice,
+        command_encoder: &mut CommandEncoder,
+        input: JobInputItem<Self, Self::In>,
+    ) -> Result<(), JobError>;
+}
+
 #[derive(Default)]
 pub struct GraphicsJobsPlugin {
     settings: JobExecutionSettings,
@@ -47,8 +67,19 @@ impl Plugin for GraphicsJobsPlugin {
             ExtractResourcePlugin::<JobExecutionSettings>::default(),
         ));
 
+        let (main_sender, main_receiver) = crossbeam_channel::unbounded();
+
+        app.insert_resource(JobResultMainWorldReceiver(main_receiver))
+            .add_systems(Update, sync_completed_jobs_main_world);
+
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(ExtractSchedule, (extract_job_meta, sync_completed_jobs));
+            let (sender, receiver) = crossbeam_channel::unbounded();
+            render_app
+                .insert_resource(JobResultSender(sender))
+                .insert_resource(JobResultReceiver(receiver))
+                .insert_resource(JobResultMainWorldSender(main_sender));
+
+            render_app.add_systems(ExtractSchedule, extract_job_meta);
 
             render_app.configure_sets(
                 Render,
@@ -73,11 +104,12 @@ impl Plugin for GraphicsJobsPlugin {
             render_app.add_systems(
                 Render,
                 (
-                    setup_job_misc_components.in_set(JobSet::Setup),
+                    setup_stalled_frames.in_set(JobSet::Setup),
                     check_job_inputs.in_set(JobSet::Check),
                     cancel_stalled_jobs.in_set(JobSet::Check),
-                    increment_frames_stalled.in_set(JobSet::Cleanup),
                     run_jobs.in_set(JobSet::Execute),
+                    increment_frames_stalled.in_set(JobSet::Cleanup),
+                    sync_completed_jobs.in_set(JobSet::Cleanup),
                 ),
             );
         }
@@ -139,22 +171,6 @@ pub enum JobError {
     CommandEncodingFailed,
 }
 
-pub trait GraphicsJob: Component + Clone {
-    type In: JobInput<Self>;
-
-    fn label() -> ShortName<'static> {
-        ShortName::of::<Self>()
-    }
-
-    fn run(
-        &self,
-        world: &World,
-        render_device: &RenderDevice,
-        commands: &mut CommandEncoder,
-        input: JobInputItem<Self, Self::In>,
-    ) -> Result<(), JobError>;
-}
-
 fn extract_jobs<J: GraphicsJob>(
     jobs: Extract<Query<(RenderEntity, &J), Added<JobMarker>>>,
     mut commands: Commands,
@@ -164,11 +180,4 @@ fn extract_jobs<J: GraphicsJob>(
         .map(|(entity, job)| (entity, job.clone()))
         .collect::<Vec<_>>();
     commands.insert_batch(cloned_jobs);
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Component)]
-enum JobStatus {
-    Waiting,
-    Ready,
-    Done,
 }

@@ -1,42 +1,117 @@
 use bevy::{
     asset::{embedded_asset, RenderAssetUsages},
+    pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
 };
 use bevy_render::{
-    mesh::{Indices, MeshVertexAttribute, MeshVertexAttributeId, PrimitiveTopology},
+    mesh::{Indices, PrimitiveTopology},
     render_resource::{
         AsBindGroup, BindGroupLayout, CommandEncoder, ComputePassDescriptor,
-        ComputePipelineDescriptor, PipelineCache, ShaderType, SpecializedComputePipeline,
-        VertexFormat,
+        ComputePipelineDescriptor, ShaderRef, ShaderType, SpecializedComputePipeline,
     },
     renderer::RenderDevice,
     storage::ShaderStorageBuffer,
 };
-use gigs::{
-    GraphicsJob, GraphicsJobsPlugin, InitGraphicsJobExt, JobAsBindGroup, JobComputePipeline,
-    JobError, JobInputItem,
-};
+
+use gigs::*;
 
 //TODO: spawn basic quad grid mesh, then have button to regenerate terrain with new seed. Have
 //terrain height be a buffer
 fn main() -> AppExit {
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins)
-        .add_plugins(GraphicsJobsPlugin::default())
-        .init_graphics_job::<TerrainGenJob>();
+    app.add_plugins((
+        DefaultPlugins,
+        GraphicsJobsPlugin::default(),
+        MaterialPlugin::<ExtendedMaterial<StandardMaterial, TerrainMaterial>>::default(),
+    ))
+    .init_graphics_job::<TerrainGenJob>();
 
-    embedded_asset!(app, "terrain_gen.wgsl");
+    //embedded_asset!(app, "terrain_gen.wgsl");
+
+    app.add_systems(Startup, setup_scene);
 
     //TODO: add setup for actual scene and interactions for terrain gen
 
     app.run()
 }
 
+fn setup_scene(
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut storage_buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    commands.spawn((
+        Camera3d::default(),
+        Transform::from_xyz(-2.0, 4.0, -2.0).looking_at(Vec3::new(2.0, 0.0, 2.0), Vec3::Y),
+    ));
+
+    let terrain_params = TerrainParams {
+        size: UVec2::splat(4),
+        resolution: UVec2::splat(256),
+    };
+
+    let mesh = meshes.add(generate_terrain_mesh(terrain_params));
+    let material = materials.add(ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: Color::oklch(0.5045, 0.1328, 148.29),
+            perceptual_roughness: 0.8,
+            ..Default::default()
+        },
+        extension: TerrainMaterial::new(terrain_params, &mut storage_buffers, &time),
+    });
+
+    commands.spawn((MeshMaterial3d(material), Mesh3d(mesh)));
+}
+
 #[derive(ShaderType, Copy, Clone)]
 struct TerrainParams {
     size: UVec2,
     resolution: UVec2,
+}
+
+#[derive(AsBindGroup, Clone, Asset, TypePath)]
+struct TerrainMaterial {
+    #[storage(30)]
+    old_heightmap: Handle<ShaderStorageBuffer>,
+    #[storage(31)]
+    new_heightmap: Handle<ShaderStorageBuffer>,
+    #[uniform(32)]
+    last_update: f32,
+}
+
+impl TerrainMaterial {
+    pub fn new(
+        terrain_params: TerrainParams,
+        storage_buffers: &mut Assets<ShaderStorageBuffer>,
+        time: &Time,
+    ) -> Self {
+        let data =
+            vec![0u8; (terrain_params.size.x as usize + 1) * (terrain_params.size.y as usize + 1)];
+        let old_heightmap = storage_buffers.add(ShaderStorageBuffer::new(
+            &data[..],
+            RenderAssetUsages::all(),
+        ));
+        let new_heightmap = storage_buffers.add(ShaderStorageBuffer::new(
+            &data[..],
+            RenderAssetUsages::all(),
+        ));
+        let last_update = time.elapsed_secs_wrapped();
+
+        Self {
+            old_heightmap,
+            new_heightmap,
+            last_update,
+        }
+    }
+}
+
+impl MaterialExtension for TerrainMaterial {
+    fn vertex_shader() -> ShaderRef {
+        ShaderRef::Path("terrain.wgsl".into())
+    }
 }
 
 //generates a simple flat grid mesh
@@ -91,6 +166,8 @@ struct TerrainGenJob {
     terrain_params: TerrainParams,
     #[uniform(1)]
     seed: f32,
+    #[uniform(1)]
+    scale: f32,
 }
 
 #[derive(Resource)]
@@ -133,10 +210,10 @@ impl GraphicsJob for TerrainGenJob {
         &self,
         _world: &World,
         _render_device: &RenderDevice,
-        commands: &mut CommandEncoder,
+        command_encoder: &mut CommandEncoder,
         (job_bind_group, job_pipeline): JobInputItem<Self, Self::In>,
     ) -> Result<(), JobError> {
-        let mut compute_pass = commands.begin_compute_pass(&ComputePassDescriptor {
+        let mut compute_pass = command_encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("terrain_gen_compute_pass"),
             timestamp_writes: None,
         });

@@ -15,6 +15,7 @@ bevy_app = "0.15.0"
 bevy_ecs = "0.15.0"
 bevy_render = "0.15.0"
 bevy_utils = "0.15.0"
+crossbeam-channel = "0.5.13"
 disqualified = "1.0.0"
 
 [dev-dependencies]
