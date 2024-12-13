@@ -27,18 +27,18 @@ use bevy_render::{
 use super::GraphicsJob;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum JobInputReady {
+pub enum JobInputStatus {
     Ready,
     Wait,
     Fail,
 }
 
-impl JobInputReady {
+impl JobInputStatus {
     fn combine(self, rhs: Self) -> Self {
         match (self, rhs) {
-            (JobInputReady::Fail, _) | (_, JobInputReady::Fail) => JobInputReady::Fail,
-            (JobInputReady::Ready, JobInputReady::Ready) => JobInputReady::Ready,
-            _ => JobInputReady::Wait,
+            (JobInputStatus::Fail, _) | (_, JobInputStatus::Fail) => JobInputStatus::Fail,
+            (JobInputStatus::Ready, JobInputStatus::Ready) => JobInputStatus::Ready,
+            _ => JobInputStatus::Wait,
         }
     }
 }
@@ -53,7 +53,7 @@ pub trait JobInput<J: GraphicsJob> {
         |_: &mut App| {}
     }
 
-    fn is_ready(data: QueryItem<Self::Data>, world: &World) -> JobInputReady;
+    fn status(data: QueryItem<Self::Data>, world: &World) -> JobInputStatus;
     fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a>;
 }
 
@@ -71,10 +71,10 @@ macro_rules! impl_job_input_tuple {
             }
 
             #[allow(unused_variables)]
-            fn is_ready(data: QueryItem<Self::Data>, world: &World) -> JobInputReady {
+            fn status(data: QueryItem<Self::Data>, world: &World) -> JobInputStatus {
                 let ($($t,)*) = data;
-                JobInputReady::Ready
-                    $(.combine(<$T as JobInput<J>>::is_ready($t, world)))*
+                JobInputStatus::Ready
+                    $(.combine(<$T as JobInput<J>>::status($t, world)))*
             }
 
             #[allow(unused_variables, clippy::unused_unit)]
@@ -93,8 +93,8 @@ impl<J: GraphicsJob> JobInput<J> for Entity {
 
     type Item<'a> = Entity;
 
-    fn is_ready(_data: QueryItem<Self::Data>, _world: &World) -> JobInputReady {
-        JobInputReady::Ready
+    fn status(_data: QueryItem<Self::Data>, _world: &World) -> JobInputStatus {
+        JobInputStatus::Ready
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
@@ -107,8 +107,8 @@ impl<J: GraphicsJob> JobInput<J> for MainEntity {
 
     type Item<'a> = Entity;
 
-    fn is_ready(_data: QueryItem<Self::Data>, _world: &World) -> JobInputReady {
-        JobInputReady::Ready
+    fn status(_data: QueryItem<Self::Data>, _world: &World) -> JobInputStatus {
+        JobInputStatus::Ready
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
@@ -121,8 +121,8 @@ impl<'t, T: Component, J: GraphicsJob> JobInput<J> for &'t T {
 
     type Item<'a> = &'a T;
 
-    fn is_ready(_data: QueryItem<Self::Data>, _world: &World) -> JobInputReady {
-        JobInputReady::Ready
+    fn status(_data: QueryItem<Self::Data>, _world: &World) -> JobInputStatus {
+        JobInputStatus::Ready
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
@@ -141,11 +141,11 @@ impl<J: GraphicsJob + AsBindGroup> JobInput<J> for JobAsBindGroup {
         JobAsBindGroupPlugin::<J>(PhantomData)
     }
 
-    fn is_ready(_data: QueryItem<Self::Data>, world: &World) -> JobInputReady {
+    fn status(_data: QueryItem<Self::Data>, world: &World) -> JobInputStatus {
         if world.contains_resource::<JobBindGroupLayout<J>>() {
-            JobInputReady::Ready
+            JobInputStatus::Ready
         } else {
-            JobInputReady::Fail
+            JobInputStatus::Fail
         }
     }
 
@@ -216,7 +216,7 @@ impl<P: SpecializedRenderPipeline<Key: Send + Sync> + Resource + FromWorld>
 pub struct JobRenderPipeline<P: SpecializedJobRenderPipeline>(pub P::Key);
 
 impl<J: GraphicsJob, P: SpecializedJobRenderPipeline> JobInput<J> for JobRenderPipeline<P> {
-    type Data = Read<JobRenderPipelineId<P>>;
+    type Data = Option<Read<JobRenderPipelineId<P>>>;
 
     type Item<'a> = &'a RenderPipeline;
 
@@ -224,23 +224,27 @@ impl<J: GraphicsJob, P: SpecializedJobRenderPipeline> JobInput<J> for JobRenderP
         JobRenderPipelinePlugin::<P>(PhantomData)
     }
 
-    fn is_ready(data: QueryItem<Self::Data>, world: &World) -> JobInputReady {
+    fn status(data: QueryItem<Self::Data>, world: &World) -> JobInputStatus {
+        let Some(JobRenderPipelineId(id, _)) = data else {
+            return JobInputStatus::Wait;
+        };
         if matches!(
             world
                 .resource::<PipelineCache>()
-                .get_render_pipeline_state(data.0),
+                .get_render_pipeline_state(*id),
             CachedPipelineState::Ok(_)
         ) {
-            JobInputReady::Ready
+            JobInputStatus::Ready
         } else {
-            JobInputReady::Wait
+            JobInputStatus::Wait
         }
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a> {
+        let id = data.unwrap().0;
         world
             .resource::<PipelineCache>()
-            .get_render_pipeline(data.0)
+            .get_render_pipeline(id)
             .expect("pipeline should be ready by this point")
     }
 }
@@ -315,7 +319,7 @@ impl<P: SpecializedComputePipeline<Key: Send + Sync> + Resource + FromWorld>
 pub struct JobComputePipeline<P: SpecializedJobComputePipeline>(P::Key);
 
 impl<J: GraphicsJob, P: SpecializedJobComputePipeline> JobInput<J> for JobComputePipeline<P> {
-    type Data = Read<JobComputePipelineId<P>>;
+    type Data = Option<Read<JobComputePipelineId<P>>>;
 
     type Item<'a> = &'a ComputePipeline;
 
@@ -323,23 +327,27 @@ impl<J: GraphicsJob, P: SpecializedJobComputePipeline> JobInput<J> for JobComput
         JobComputePipelinePlugin::<P>(PhantomData)
     }
 
-    fn is_ready(data: QueryItem<Self::Data>, world: &World) -> JobInputReady {
+    fn status(data: QueryItem<Self::Data>, world: &World) -> JobInputStatus {
+        let Some(JobComputePipelineId(id, _)) = data else {
+            return JobInputStatus::Wait;
+        };
         if matches!(
             world
                 .resource::<PipelineCache>()
-                .get_compute_pipeline_state(data.0),
+                .get_compute_pipeline_state(*id),
             CachedPipelineState::Ok(_)
         ) {
-            JobInputReady::Ready
+            JobInputStatus::Ready
         } else {
-            JobInputReady::Wait
+            JobInputStatus::Wait
         }
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a> {
+        let id = data.unwrap().0;
         world
             .resource::<PipelineCache>()
-            .get_compute_pipeline(data.0)
+            .get_compute_pipeline(id)
             .expect("pipeline should be ready by this point")
     }
 }

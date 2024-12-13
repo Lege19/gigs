@@ -5,23 +5,30 @@ mod input;
 mod meta;
 mod runner;
 pub use app::*;
+use disqualified::ShortName;
 pub use input::*;
 pub use meta::*;
-use runner::erase_jobs;
+use runner::{
+    cancel_stalled_jobs, check_job_inputs, erase_jobs, increment_frames_stalled, run_jobs,
+    setup_job_misc_components, sync_completed_jobs,
+};
 
 use core::marker::PhantomData;
 
-use bevy_app::{App, Plugin, PostUpdate};
+use bevy_app::{App, Plugin};
 use bevy_ecs::{
     component::Component,
-    entity::Entity,
+    event::Event,
     query::Added,
-    schedule::IntoSystemConfigs,
+    schedule::{IntoSystemConfigs, IntoSystemSetConfigs, SystemSet},
     system::{Commands, Query, Resource},
     world::World,
 };
 use bevy_render::{
-    render_resource::CommandEncoder, renderer::RenderDevice, sync_component::SyncComponentPlugin,
+    extract_resource::{ExtractResource, ExtractResourcePlugin},
+    render_resource::CommandEncoder,
+    renderer::RenderDevice,
+    sync_component::SyncComponentPlugin,
     ExtractSchedule, Render, RenderApp, RenderSet,
 };
 use bevy_render::{sync_world::RenderEntity, Extract};
@@ -34,19 +41,58 @@ pub struct GraphicsJobsPlugin {
 impl Plugin for GraphicsJobsPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.settings);
+
+        app.add_plugins((
+            SyncComponentPlugin::<JobMarker>::default(),
+            ExtractResourcePlugin::<JobExecutionSettings>::default(),
+        ));
+
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(ExtractSchedule, extract_job_meta);
+            render_app.add_systems(ExtractSchedule, (extract_job_meta, sync_completed_jobs));
+
+            render_app.configure_sets(
+                Render,
+                (
+                    JobSet::Setup,
+                    JobSet::Check,
+                    JobSet::Execute,
+                    JobSet::Cleanup,
+                )
+                    .chain(),
+            );
+
+            render_app.configure_sets(
+                Render,
+                (
+                    JobSet::Check.after(RenderSet::Prepare),
+                    JobSet::Execute.before(RenderSet::Render),
+                    JobSet::Cleanup.in_set(RenderSet::Cleanup),
+                ),
+            );
+
+            render_app.add_systems(
+                Render,
+                (
+                    setup_job_misc_components.in_set(JobSet::Setup),
+                    check_job_inputs.in_set(JobSet::Check),
+                    cancel_stalled_jobs.in_set(JobSet::Check),
+                    increment_frames_stalled.in_set(JobSet::Cleanup),
+                    run_jobs.in_set(JobSet::Execute),
+                ),
+            );
         }
     }
 }
 
-pub enum GraphicsJobSet {
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, SystemSet)]
+pub enum JobSet {
+    Setup,
     Check,
     Execute,
     Cleanup,
 }
 
-#[derive(Copy, Clone, Resource)]
+#[derive(Copy, Clone, Resource, ExtractResource)]
 pub struct JobExecutionSettings {
     pub max_jobs_per_frame: u32,
     pub max_job_stall_frames: u32,
@@ -71,25 +117,34 @@ impl<J: GraphicsJob> Default for SpecializedGraphicsJobPlugin<J> {
 
 impl<J: GraphicsJob> Plugin for SpecializedGraphicsJobPlugin<J> {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            SyncComponentPlugin::<J>::default(),
-            <J as GraphicsJob>::In::plugin(),
-        ));
+        app.add_plugins(<J as GraphicsJob>::In::plugin());
 
         app.register_required_components::<J, JobMarker>();
 
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .add_systems(ExtractSchedule, extract_jobs::<J>)
-                .add_systems(Render, erase_jobs::<J>.in_set(RenderSet::Queue));
+                .add_systems(Render, erase_jobs::<J>.in_set(JobSet::Setup));
         }
     }
 }
 
-pub struct JobError;
+#[derive(Event, Copy, Clone)]
+pub struct JobComplete(pub Result<(), JobError>);
+
+#[derive(Copy, Clone)]
+pub enum JobError {
+    Stalled,
+    InputsNotSatisfied,
+    CommandEncodingFailed,
+}
 
 pub trait GraphicsJob: Component + Clone {
     type In: JobInput<Self>;
+
+    fn label() -> ShortName<'static> {
+        ShortName::of::<Self>()
+    }
 
     fn run(
         &self,
@@ -111,40 +166,9 @@ fn extract_jobs<J: GraphicsJob>(
     commands.insert_batch(cloned_jobs);
 }
 
-fn extract_job_meta(
-    jobs: Extract<
-        Query<
-            (
-                RenderEntity,
-                &JobPriority,
-                &ComputedPriority,
-                &JobDependencies,
-            ),
-            Added<JobMarker>,
-        >,
-    >,
-    mut commands: Commands,
-) {
-    for (render_entity, priority, computed_priority, deps) in &jobs {
-        commands.entity(render_entity).insert((
-            if deps.0.is_empty() {
-                JobStatus::Waiting
-            } else {
-                JobStatus::Blocked
-            },
-            *priority,
-            *computed_priority,
-            deps.clone(), //FIXME: entities contained have main world ids, not render world ids
-        ));
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Component)]
 enum JobStatus {
-    Blocked,
     Waiting,
     Ready,
     Done,
 }
-
-fn check_dependencies(mut commands: Commands) {}

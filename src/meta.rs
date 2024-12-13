@@ -4,32 +4,12 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-use bevy_ecs::component::Component;
-
-#[derive(Component, Default)]
-#[require(JobPriority)]
-pub struct JobMarker;
-
-#[derive(Copy, Clone, Component, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct JobPriority(pub Priority);
-
-impl JobPriority {
-    #[inline(always)]
-    pub const fn critical() -> Self {
-        Self(Priority::Critical)
-    }
-
-    #[inline(always)]
-    pub const fn non_critical<const WEIGHT: u32>() -> Self {
-        const {
-            assert!(WEIGHT > 0);
-            //SAFETY: WEIGHT is not zero
-            Self(Priority::NonCritical(unsafe {
-                NonZero::new_unchecked(WEIGHT)
-            }))
-        }
-    }
-}
+use bevy_ecs::{
+    component::Component,
+    query::Added,
+    system::{Commands, Query},
+};
+use bevy_render::{sync_world::RenderEntity, Extract};
 
 /// The priority level of a graphics job.
 ///
@@ -87,6 +67,45 @@ impl Add for Priority {
 impl AddAssign for Priority {
     fn add_assign(&mut self, rhs: Self) {
         *self = *self + rhs;
+    }
+}
+
+#[derive(Component, Default)]
+#[require(JobPriority)]
+pub struct JobMarker;
+
+#[derive(Copy, Clone, Component, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct JobPriority(pub Priority);
+
+impl JobPriority {
+    #[inline(always)]
+    pub const fn critical() -> Self {
+        Self(Priority::Critical)
+    }
+
+    #[inline(always)]
+    pub const fn non_critical<const WEIGHT: u32>() -> Self {
+        const {
+            assert!(WEIGHT > 0);
+            //SAFETY: WEIGHT is not zero
+            Self(Priority::NonCritical(unsafe {
+                NonZero::new_unchecked(WEIGHT)
+            }))
+        }
+    }
+
+    #[inline]
+    pub fn is_critical(&self) -> bool {
+        self.0 == Priority::Critical
+    }
+}
+
+pub(super) fn extract_job_meta(
+    jobs: Extract<Query<(RenderEntity, &JobPriority), Added<JobMarker>>>,
+    mut commands: Commands,
+) {
+    for (render_entity, priority) in &jobs {
+        commands.entity(render_entity).insert(*priority);
     }
 }
 
