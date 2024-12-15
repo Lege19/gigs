@@ -32,8 +32,8 @@ job dependencies are added, and the code refactored.
 ## Supported Bevy Versions
 
 | Bevy    | Gigs |
-| ------- | ----- |
-| 0.15    | 0.1..main  |
+| ------- | ---- |
+| 0.15    | 0.1  |
 
 ## License
 
