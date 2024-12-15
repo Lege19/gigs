@@ -4,7 +4,7 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::{
     component::Component,
     entity::Entity,
-    query::{Changed, QueryItem, ReadOnlyQueryData},
+    query::{Changed, QueryItem, ReadOnlyQueryData, WorldQuery},
     schedule::IntoSystemConfigs,
     system::{lifetimeless::Read, Commands, Query, Res, ResMut, Resource, StaticSystemParam},
     world::{FromWorld, World},
@@ -26,10 +26,14 @@ use bevy_render::{
 
 use super::GraphicsJob;
 
+/// The status of a job input
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum JobInputStatus {
+    /// Signals that input is ready
     Ready,
+    /// Signals that input is not ready, but should be awaited
     Wait,
+    /// Signals that input is not ready, and shouldn't be awaited
     Fail,
 }
 
@@ -45,6 +49,16 @@ impl JobInputStatus {
 
 pub type JobInputItem<'a, J, In> = <In as JobInput<J>>::Item<'a>;
 
+/// A trait describing input to a graphics job.
+///
+/// This trait may be thought of as similar to [`QueryData`], but
+/// which also sets more things up behind the scenes. For example,
+/// an implementor may prepare a bind group using data from the
+/// job entity and the [`World`].
+///
+/// Note: while there is no blanket impl for [`JobInput`] for all
+/// [`ReadOnlyQueryData`] types, it *is* implemented for all single
+/// components, [`Entity`], [`MainEntity`], and [`Option`].
 pub trait JobInput<J: GraphicsJob> {
     type Data: ReadOnlyQueryData;
     type Item<'a>;
@@ -130,6 +144,20 @@ impl<'t, T: Component, J: GraphicsJob> JobInput<J> for &'t T {
     }
 }
 
+impl<T: ReadOnlyQueryData, J: GraphicsJob> JobInput<J> for Option<T> {
+    type Data = Option<T>;
+
+    type Item<'a> = Option<<T as WorldQuery>::Item<'a>>;
+
+    fn status(_data: QueryItem<Self::Data>, _world: &World) -> JobInputStatus {
+        JobInputStatus::Ready
+    }
+
+    fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
+        data
+    }
+}
+
 pub struct JobAsBindGroup;
 
 impl<J: GraphicsJob + AsBindGroup> JobInput<J> for JobAsBindGroup {
@@ -172,6 +200,8 @@ impl<J: GraphicsJob + AsBindGroup> Plugin for JobAsBindGroupPlugin<J> {
     }
 }
 
+/// A [`JobInput`] type that prepares the graphics job type *itself* as a bind group,
+/// using its [`AsBindGroup`] implementation.
 #[derive(Component)]
 pub struct PreparedJobBindGroup<J: GraphicsJob + AsBindGroup>(
     PreparedBindGroup<<J as AsBindGroup>::Data>,
@@ -204,6 +234,7 @@ fn prepare_job_bind_group<J: GraphicsJob + AsBindGroup>(
     }
 }
 
+#[doc(hidden)]
 pub trait SpecializedJobRenderPipeline:
     SpecializedRenderPipeline<Key: Send + Sync> + Resource + FromWorld
 {
@@ -213,6 +244,8 @@ impl<P: SpecializedRenderPipeline<Key: Send + Sync> + Resource + FromWorld>
 {
 }
 
+/// A [`JobInput`] type that sets up a [`RenderPipeline`] for a job. This component must be
+/// added to a job as it is spawned in order to setup the pipeline.
 #[derive(Component)]
 pub struct JobRenderPipeline<P: SpecializedJobRenderPipeline>(pub P::Key);
 
@@ -275,6 +308,7 @@ impl<P: SpecializedJobRenderPipeline> ExtractComponent for JobRenderPipeline<P> 
 }
 
 #[derive(Component)]
+#[doc(hidden)]
 pub struct JobRenderPipelineId<P: SpecializedJobRenderPipeline>(
     CachedRenderPipelineId,
     PhantomData<P>,
@@ -297,7 +331,6 @@ impl<P: SpecializedJobRenderPipeline> Plugin for JobRenderPipelinePlugin<P> {
     }
 
     fn finish(&self, app: &mut App) {
-        // do nothing
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.init_resource::<P>();
         }
@@ -319,6 +352,7 @@ fn queue_job_render_pipelines<P: SpecializedJobRenderPipeline>(
     }
 }
 
+#[doc(hidden)]
 pub trait SpecializedJobComputePipeline:
     SpecializedComputePipeline<Key: Send + Sync> + Resource + FromWorld
 {
@@ -328,6 +362,8 @@ impl<P: SpecializedComputePipeline<Key: Send + Sync> + Resource + FromWorld>
 {
 }
 
+/// A [`JobInput`] type that sets up a [`ComputePipeline`] for a job. This component must be
+/// added to a job as it is spawned in order to setup the pipeline.
 #[derive(Component)]
 pub struct JobComputePipeline<P: SpecializedJobComputePipeline>(P::Key);
 
@@ -390,6 +426,7 @@ impl<P: SpecializedJobComputePipeline> ExtractComponent for JobComputePipeline<P
 }
 
 #[derive(Component)]
+#[doc(hidden)]
 pub struct JobComputePipelineId<P: SpecializedJobComputePipeline>(
     CachedComputePipelineId,
     PhantomData<P>,
@@ -412,7 +449,6 @@ impl<P: SpecializedJobComputePipeline> Plugin for JobComputePipelinePlugin<P> {
     }
 
     fn finish(&self, app: &mut App) {
-        // do nothing
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.init_resource::<P>();
         }

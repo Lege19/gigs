@@ -9,9 +9,9 @@ pub use ext::*;
 pub use input::*;
 pub use meta::*;
 use runner::{
-    cancel_stalled_jobs, check_job_inputs, erase_jobs, increment_frames_stalled, run_jobs,
-    setup_stalled_frames, sync_completed_jobs, sync_completed_jobs_main_world,
-    JobResultMainWorldReceiver, JobResultMainWorldSender, JobResultReceiver, JobResultSender,
+    check_job_inputs, erase_jobs, increment_time_out_frames, run_jobs, setup_time_out_frames,
+    sync_completed_jobs, sync_completed_jobs_main_world, time_out_jobs, JobResultMainWorldReceiver,
+    JobResultMainWorldSender, JobResultReceiver, JobResultSender,
 };
 
 use core::marker::PhantomData;
@@ -36,7 +36,16 @@ use bevy_render::{sync_world::RenderEntity, Extract};
 
 /// A trait for components describing a unit of rendering work.
 ///
+/// When a [`Component`] implementing this trait is added to the [`World`],
+/// it is extracted to the render world, where it waits for its inputs to be
+/// prepared. When they are ready, it will execute and the commands it encodes
+/// will be submitted before the render graph is executed.
 ///
+/// You can also specify a priority for a running job by adding the [`JobPriority`]
+/// component when it is spawned.
+///
+/// Note: you must call [`init_graphics_job`](crate::ext::InitGraphicsJobExt::init_graphics_job)
+/// on [`App`] for the job to execute.
 pub trait GraphicsJob: Component + Clone {
     type In: JobInput<Self>;
 
@@ -53,6 +62,7 @@ pub trait GraphicsJob: Component + Clone {
     ) -> Result<(), JobError>;
 }
 
+/// The main plugin for `gigs`. This plugin is needed for all functionality.
 #[derive(Default)]
 pub struct GraphicsJobsPlugin {
     settings: JobExecutionSettings,
@@ -104,11 +114,11 @@ impl Plugin for GraphicsJobsPlugin {
             render_app.add_systems(
                 Render,
                 (
-                    setup_stalled_frames.in_set(JobSet::Setup),
+                    setup_time_out_frames.in_set(JobSet::Setup),
                     check_job_inputs.in_set(JobSet::Check),
-                    cancel_stalled_jobs.in_set(JobSet::Check),
+                    time_out_jobs.in_set(JobSet::Check),
                     run_jobs.in_set(JobSet::Execute),
-                    increment_frames_stalled.in_set(JobSet::Cleanup),
+                    increment_time_out_frames.in_set(JobSet::Cleanup),
                     sync_completed_jobs.in_set(JobSet::Cleanup),
                 ),
             );
@@ -116,29 +126,45 @@ impl Plugin for GraphicsJobsPlugin {
     }
 }
 
+/// The render-world system sets for graphics jobs
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, SystemSet)]
 pub enum JobSet {
+    /// Various graphics jobs components are setup in this set
     Setup,
+    /// Graphics jobs are checked to see if they're ready for
+    /// execution in this set
     Check,
+    /// Graphics jobs are executed in this set.
     Execute,
+    /// Graphics jobs are cleaned up in this set, and completion
+    /// events are collected and dispatched.
     Cleanup,
 }
 
+/// Settings for how jobs are scheduled each frame
 #[derive(Copy, Clone, Resource, ExtractResource)]
 pub struct JobExecutionSettings {
+    /// The maximum number of jobs to execute each frame. This number
+    /// may be exceeded in the case that a large number of jobs are
+    /// queued with [`Priority::Critical`].
     pub max_jobs_per_frame: u32,
-    pub max_job_stall_frames: u32,
+    /// The maximum number of frames a job should wait to execute
+    /// before timing out.
+    pub time_out_frames: u32,
 }
 
 impl Default for JobExecutionSettings {
     fn default() -> Self {
         Self {
             max_jobs_per_frame: 16,
-            max_job_stall_frames: 16,
+            time_out_frames: 16,
         }
     }
 }
 
+/// A plugin that sets up logic for a specific implementation of [`GraphicsJob`].
+/// It's recommended to call [`init_graphics_job`](crate::ext::InitGraphicsJobExt::init_graphics_job)
+/// on [`App`] rather than add this plugin manually.
 pub struct SpecializedGraphicsJobPlugin<J: GraphicsJob>(PhantomData<J>);
 
 impl<J: GraphicsJob> Default for SpecializedGraphicsJobPlugin<J> {
@@ -161,14 +187,23 @@ impl<J: GraphicsJob> Plugin for SpecializedGraphicsJobPlugin<J> {
     }
 }
 
+/// An event signaling a completed (or failed) graphics job.
 #[derive(Event, Copy, Clone, Debug)]
 pub struct JobComplete(pub Result<(), JobError>);
 
+/// Describes how an incomplete job may have failed.
 #[derive(Copy, Clone, Debug)]
 pub enum JobError {
-    Stalled,
-    InputsNotSatisfied,
-    CommandEncodingFailed,
+    /// Signals a job that failed due to timing out, either
+    /// because its needed resources were not ready in time,
+    /// or because too many jobs were scheduled ahead of it.
+    TimedOut,
+    /// Signals a job that failed because its inputs were
+    /// unable to be satisfied, for example if a needed
+    /// extra component was not provided by the user.
+    InputsFailed,
+    /// Signals a job that failed during execution.
+    ExecutionFailed,
 }
 
 fn extract_jobs<J: GraphicsJob>(

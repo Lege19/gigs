@@ -70,10 +70,12 @@ impl AddAssign for Priority {
     }
 }
 
+/// A generic marker for all graphics jobs.
 #[derive(Component, Default)]
 #[require(JobPriority)]
 pub struct JobMarker;
 
+/// Sets the execution priority for a scheduled job.
 #[derive(Copy, Clone, Component, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct JobPriority(pub Priority);
 

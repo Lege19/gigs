@@ -63,7 +63,7 @@ fn erased_run<J: GraphicsJob>(
 ) -> Result<(), JobError> {
     let Some((job, input_data)) = entity.get_components::<(&J, <J::In as JobInput<J>>::Data)>()
     else {
-        return Err(JobError::InputsNotSatisfied);
+        return Err(JobError::InputsFailed);
     };
 
     let input = <J::In as JobInput<J>>::get(input_data, world);
@@ -92,41 +92,41 @@ pub fn erase_jobs<J: GraphicsJob>(
 }
 
 #[derive(Component, Copy, Clone)]
-pub(super) struct FramesStalled(u32);
+pub(super) struct TimeOutFrames(u32);
 
-pub(super) fn setup_stalled_frames(
-    jobs: Query<Entity, (With<JobMarker>, Without<FramesStalled>)>,
+pub(super) fn setup_time_out_frames(
+    jobs: Query<Entity, (With<JobMarker>, Without<TimeOutFrames>)>,
     mut commands: Commands,
 ) {
     let to_insert = jobs
         .iter()
-        .zip(iter::repeat(FramesStalled(0)))
+        .zip(iter::repeat(TimeOutFrames(0)))
         .collect::<Vec<_>>();
     commands.insert_batch(to_insert);
 }
 
-pub(super) fn cancel_stalled_jobs(
-    jobs: Query<(Entity, Option<&MainEntity>, &FramesStalled)>,
+pub(super) fn time_out_jobs(
+    jobs: Query<(Entity, Option<&MainEntity>, &TimeOutFrames)>,
     exec_settings: Res<JobExecutionSettings>,
     completed_jobs: Res<JobResultSender>,
     mut commands: Commands,
 ) {
     jobs.iter()
-        .filter(|(_, _, frames)| (frames.0 > exec_settings.max_job_stall_frames))
+        .filter(|(_, _, frames)| (frames.0 > exec_settings.time_out_frames))
         .for_each(|(id, main_id, _)| {
             completed_jobs
                 .0
                 .send(JobResult {
                     entity: id,
                     main_entity: main_id.copied(),
-                    result: Err(JobError::Stalled),
+                    result: Err(JobError::TimedOut),
                 })
                 .unwrap();
             commands.entity(id).despawn();
         });
 }
 
-pub(super) fn increment_frames_stalled(mut jobs: Query<&mut FramesStalled>) {
+pub(super) fn increment_time_out_frames(mut jobs: Query<&mut TimeOutFrames>) {
     jobs.iter_mut().for_each(|mut frames| frames.0 += 1);
 }
 
@@ -151,7 +151,7 @@ pub(super) fn check_job_inputs(
                         .send(JobResult {
                             entity: entity.id(),
                             main_entity: main_entity.copied(),
-                            result: Err(JobError::InputsNotSatisfied),
+                            result: Err(JobError::InputsFailed),
                         })
                         .unwrap();
                     None
