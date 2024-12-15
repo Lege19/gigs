@@ -5,20 +5,19 @@ edition = "2021"
 authors = ["Emerson Coskey <coskey@emerlabs.net>"]
 categories = ["games", "game-engines", "graphics", "rendering"]
 keywords = ["game", "gamedev", "graphics", "bevy", "shaders"]
-description = "Intermittent graphics jobs for the Bevy Game Engine"
+description = "on-demand graphics jobs for the Bevy Game Engine"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ecoskey/gigs"
 rust-version = "1.83.0"
 readme = "README.md"
 exclude = [".github"]
 
-
 [dependencies]
 bevy_app = "0.15.0"
 bevy_ecs = "0.15.0"
 bevy_render = "0.15.0"
 bevy_utils = "0.15.0"
-crossbeam-channel = "0.5.13"
+crossbeam-channel = "0.5.14"
 disqualified = "1.0.0"
 
 [dev-dependencies]
