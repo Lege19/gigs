@@ -1,3 +1,22 @@
+//! `gigs`: on-demand graphics jobs for `bevy`
+//!
+//! Gigs is a plugin for the Bevy game engine that aims to provide a simple
+//! abstraction for "graphics jobs", units of rendering work that only need to be
+//! done sporadically, on-demand. For example, a terrain generation compute shader
+//! would only need to be run once for each chunk of terrain. In many cases, this
+//! crate will allow you to skip most or all of the manual extraction and resource
+//! prep boilerplate that comes along with this, and focus on writing shaders.
+//!
+//! Getting started:
+//!
+//! 1. First, add `gigs` to your Cargo dependencies: `cargo add gigs`
+//! 2. Add `GraphicsJobsPlugin` to your `App`
+//! 3. Implement `GraphicsJob` for your job component
+//! 4. Call `init_graphics_job` on `App` to initialize your custom job
+//! 5. To run the job, simply spawn an entity with your job component!
+//!
+//! See the examples in the repo for more in-depth showcases!
+
 #![allow(clippy::type_complexity)]
 
 mod ext;
