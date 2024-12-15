@@ -133,7 +133,7 @@ impl<'t, T: Component, J: GraphicsJob> JobInput<J> for &'t T {
 pub struct JobAsBindGroup;
 
 impl<J: GraphicsJob + AsBindGroup> JobInput<J> for JobAsBindGroup {
-    type Data = Read<PreparedJobBindGroup<J>>;
+    type Data = Option<Read<PreparedJobBindGroup<J>>>;
 
     type Item<'a> = &'a PreparedBindGroup<<J as AsBindGroup>::Data>;
 
@@ -141,16 +141,15 @@ impl<J: GraphicsJob + AsBindGroup> JobInput<J> for JobAsBindGroup {
         JobAsBindGroupPlugin::<J>(PhantomData)
     }
 
-    fn status(_data: QueryItem<Self::Data>, world: &World) -> JobInputStatus {
-        if world.contains_resource::<JobBindGroupLayout<J>>() {
-            JobInputStatus::Ready
-        } else {
-            JobInputStatus::Fail
+    fn status(data: QueryItem<Self::Data>, _world: &World) -> JobInputStatus {
+        match data {
+            Some(_) => JobInputStatus::Ready,
+            None => JobInputStatus::Wait,
         }
     }
 
     fn get<'a>(data: QueryItem<'a, Self::Data>, _world: &'a World) -> Self::Item<'a> {
-        &data.0
+        &data.unwrap().0
     }
 }
 
@@ -167,7 +166,9 @@ impl<J: GraphicsJob + AsBindGroup> Plugin for JobAsBindGroupPlugin<J> {
     }
 
     fn finish(&self, app: &mut App) {
-        app.init_resource::<JobBindGroupLayout<J>>();
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.init_resource::<JobBindGroupLayout<J>>();
+        }
     }
 }
 
@@ -214,6 +215,12 @@ impl<P: SpecializedRenderPipeline<Key: Send + Sync> + Resource + FromWorld>
 
 #[derive(Component)]
 pub struct JobRenderPipeline<P: SpecializedJobRenderPipeline>(pub P::Key);
+
+impl<P: SpecializedJobRenderPipeline<Key: Default>> Default for JobRenderPipeline<P> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<J: GraphicsJob, P: SpecializedJobRenderPipeline> JobInput<J> for JobRenderPipeline<P> {
     type Data = Option<Read<JobRenderPipelineId<P>>>;
@@ -323,6 +330,12 @@ impl<P: SpecializedComputePipeline<Key: Send + Sync> + Resource + FromWorld>
 
 #[derive(Component)]
 pub struct JobComputePipeline<P: SpecializedJobComputePipeline>(P::Key);
+
+impl<P: SpecializedJobComputePipeline<Key: Default>> Default for JobComputePipeline<P> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<J: GraphicsJob, P: SpecializedJobComputePipeline> JobInput<J> for JobComputePipeline<P> {
     type Data = Option<Read<JobComputePipelineId<P>>>;

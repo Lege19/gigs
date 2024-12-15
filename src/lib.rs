@@ -16,7 +16,7 @@ use runner::{
 
 use core::marker::PhantomData;
 
-use bevy_app::{App, Plugin, PreUpdate, Update};
+use bevy_app::{App, Plugin, Update};
 use bevy_ecs::{
     component::Component,
     event::Event,
@@ -161,10 +161,10 @@ impl<J: GraphicsJob> Plugin for SpecializedGraphicsJobPlugin<J> {
     }
 }
 
-#[derive(Event, Copy, Clone)]
+#[derive(Event, Copy, Clone, Debug)]
 pub struct JobComplete(pub Result<(), JobError>);
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum JobError {
     Stalled,
     InputsNotSatisfied,

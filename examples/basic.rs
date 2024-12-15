@@ -13,7 +13,7 @@ fn main() -> AppExit {
 
     app.world_mut()
         .spawn(BasicJob)
-        .observe(|_trigger: Trigger<JobComplete>| println!("Job Done"));
+        .observe(|_trigger: Trigger<JobComplete>| println!("Job done!"));
 
     app.run()
 }

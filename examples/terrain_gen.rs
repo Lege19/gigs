@@ -1,5 +1,8 @@
+use std::mem;
+
 use bevy::{
     asset::{embedded_asset, RenderAssetUsages},
+    input::keyboard::KeyboardInput,
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
 };
@@ -15,8 +18,6 @@ use bevy_render::{
 
 use gigs::*;
 
-//TODO: spawn basic quad grid mesh, then have button to regenerate terrain with new seed. Have
-//terrain height be a buffer
 fn main() -> AppExit {
     let mut app = App::new();
 
@@ -27,11 +28,11 @@ fn main() -> AppExit {
     ))
     .init_graphics_job::<TerrainGenJob>();
 
-    //embedded_asset!(app, "terrain_gen.wgsl");
+    embedded_asset!(app, "examples", "terrain_gen.wgsl");
+    embedded_asset!(app, "examples", "terrain.wgsl");
 
-    app.add_systems(Startup, setup_scene);
-
-    //TODO: add setup for actual scene and interactions for terrain gen
+    app.add_systems(Startup, setup_scene)
+        .add_systems(Update, handle_input);
 
     app.run()
 }
@@ -48,6 +49,24 @@ fn setup_scene(
         Transform::from_xyz(-2.0, 4.0, -2.0).looking_at(Vec3::new(2.0, 0.0, 2.0), Vec3::Y),
     ));
 
+    commands.spawn((
+        DirectionalLight {
+            shadows_enabled: false,
+            ..Default::default()
+        },
+        Transform::from_xyz(1.0, 6.0, 2.0).looking_at(Vec3::new(2.0, 0.0, 2.0), Vec3::Y),
+    ));
+
+    commands.spawn((
+        Text::from("Press [space] to generate new terrain!"),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(12.0),
+            top: Val::Px(12.0),
+            ..Default::default()
+        },
+    ));
+
     let terrain_params = TerrainParams {
         size: UVec2::splat(4),
         resolution: UVec2::splat(256),
@@ -57,7 +76,7 @@ fn setup_scene(
     let material = materials.add(ExtendedMaterial {
         base: StandardMaterial {
             base_color: Color::oklch(0.5045, 0.1328, 148.29),
-            perceptual_roughness: 0.8,
+            perceptual_roughness: 0.4,
             ..Default::default()
         },
         extension: TerrainMaterial::new(terrain_params, &mut storage_buffers, &time),
@@ -66,20 +85,61 @@ fn setup_scene(
     commands.spawn((MeshMaterial3d(material), Mesh3d(mesh)));
 }
 
+fn handle_input(
+    mut keyboard_input: EventReader<KeyboardInput>,
+    terrain: Single<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    mut materials: ResMut<Assets<ExtendedMaterial<StandardMaterial, TerrainMaterial>>>,
+    time: Res<Time>,
+    mut commands: Commands,
+) {
+    let current_time = time.elapsed_secs_wrapped();
+    let MeshMaterial3d(handle) = terrain.into_inner();
+    if let Some(material) = materials.get_mut(handle) {
+        let dt = current_time - material.extension.last_update;
+
+        if keyboard_input
+            .read()
+            .any(|key| key.key_code == KeyCode::Space)
+            && dt > 0.25
+        {
+            material.extension.last_update = current_time;
+            mem::swap(
+                &mut material.extension.old_heightmap,
+                &mut material.extension.new_heightmap,
+            );
+
+            commands.spawn(TerrainGenJob {
+                old_heightmap: material.extension.old_heightmap.clone(),
+                new_heightmap: material.extension.new_heightmap.clone(),
+                terrain_params: material.extension.terrain_params,
+                seed: current_time,
+                height_scale: 2.0,
+            });
+        }
+    }
+}
+
 #[derive(ShaderType, Copy, Clone)]
 struct TerrainParams {
     size: UVec2,
     resolution: UVec2,
 }
 
+impl TerrainParams {
+    fn vertex_count(&self) -> u32 {
+        self.resolution.x * self.resolution.y
+    }
+}
+
 #[derive(AsBindGroup, Clone, Asset, TypePath)]
 struct TerrainMaterial {
-    #[storage(30)]
+    #[storage(30, visibility(vertex))]
     old_heightmap: Handle<ShaderStorageBuffer>,
-    #[storage(31)]
+    #[storage(31, visibility(vertex))]
     new_heightmap: Handle<ShaderStorageBuffer>,
-    #[uniform(32)]
+    #[uniform(32, visibility(vertex))]
     last_update: f32,
+    terrain_params: TerrainParams,
 }
 
 impl TerrainMaterial {
@@ -88,8 +148,7 @@ impl TerrainMaterial {
         storage_buffers: &mut Assets<ShaderStorageBuffer>,
         time: &Time,
     ) -> Self {
-        let data =
-            vec![0u8; (terrain_params.size.x as usize + 1) * (terrain_params.size.y as usize + 1)];
+        let data = vec![0u8; terrain_params.vertex_count() as usize * size_of::<Vec4>()];
         let old_heightmap = storage_buffers.add(ShaderStorageBuffer::new(
             &data[..],
             RenderAssetUsages::all(),
@@ -104,13 +163,14 @@ impl TerrainMaterial {
             old_heightmap,
             new_heightmap,
             last_update,
+            terrain_params,
         }
     }
 }
 
 impl MaterialExtension for TerrainMaterial {
     fn vertex_shader() -> ShaderRef {
-        ShaderRef::Path("terrain.wgsl".into())
+        ShaderRef::Path("embedded://terrain_gen/terrain.wgsl".into())
     }
 }
 
@@ -118,30 +178,30 @@ impl MaterialExtension for TerrainMaterial {
 fn generate_terrain_mesh(terrain_params: TerrainParams) -> Mesh {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
 
+    let mut verts = Vec::new();
+
+    for y in 0..terrain_params.resolution.y {
+        for x in 0..terrain_params.resolution.x {
+            let x_pos =
+                x as f32 / terrain_params.resolution.x as f32 * terrain_params.size.x as f32;
+            let z_pos =
+                y as f32 / terrain_params.resolution.y as f32 * terrain_params.size.y as f32;
+            verts.push([x_pos, 0.0, z_pos]);
+        }
+    }
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, verts);
+
     mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        (0..(terrain_params.resolution.x + 1) * (terrain_params.resolution.y + 1))
-            .map(|i| {
-                (
-                    i / terrain_params.resolution.x,
-                    i % terrain_params.resolution.x,
-                )
-            })
-            .map(|(x, y)| {
-                [
-                    x as f32 / terrain_params.resolution.x as f32 * terrain_params.size.x as f32,
-                    y as f32 / terrain_params.resolution.y as f32 * terrain_params.size.y as f32,
-                    0.0,
-                ]
-            })
-            .collect::<Vec<_>>(),
+        Mesh::ATTRIBUTE_NORMAL,
+        vec![[0.0, 1.0, 0.0]; terrain_params.vertex_count() as usize],
     );
 
     let mut indices: Vec<u32> = Vec::new();
 
-    for y in 0..terrain_params.resolution.y {
-        for x in 0..terrain_params.resolution.x {
-            let i = y * terrain_params.resolution.y + x;
+    for y in 0..terrain_params.resolution.y - 1 {
+        for x in 0..terrain_params.resolution.x - 1 {
+            let i = y * terrain_params.resolution.x + x;
             indices.extend_from_slice(&[
                 i,
                 i + terrain_params.resolution.x,
@@ -153,21 +213,22 @@ fn generate_terrain_mesh(terrain_params: TerrainParams) -> Mesh {
 
     mesh.insert_indices(Indices::U32(indices));
 
-    mesh.compute_smooth_normals();
-
     mesh
 }
 
 #[derive(AsBindGroup, Clone, Component)]
+#[require(JobComputePipeline<TerrainGenPipeline>)]
 struct TerrainGenJob {
-    #[storage(0)]
-    heights_buffer: Handle<ShaderStorageBuffer>,
-    #[uniform(1)]
+    #[storage(0, visibility(compute))]
+    old_heightmap: Handle<ShaderStorageBuffer>,
+    #[storage(1, visibility(compute))]
+    new_heightmap: Handle<ShaderStorageBuffer>,
+    #[uniform(2, visibility(compute))]
     terrain_params: TerrainParams,
-    #[uniform(1)]
+    #[uniform(2, visibility(compute))]
     seed: f32,
-    #[uniform(1)]
-    scale: f32,
+    #[uniform(2, visibility(compute))]
+    height_scale: f32,
 }
 
 #[derive(Resource)]
@@ -181,7 +242,7 @@ impl FromWorld for TerrainGenPipeline {
         let layout = TerrainGenJob::bind_group_layout(world.resource::<RenderDevice>());
         let shader = world
             .resource::<AssetServer>()
-            .load("embedded://terrain_gen.wgsl");
+            .load("embedded://terrain_gen/terrain_gen.wgsl");
 
         Self { layout, shader }
     }
