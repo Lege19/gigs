@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use bevy_render::{render_resource::CommandEncoder, renderer::RenderDevice};
 use gigs::{
-    GraphicsJob, GraphicsJobsPlugin, InitGraphicsJobExt, JobComplete, JobError, JobInputItem,
+    input::JobInputItem, GraphicsJob, GraphicsJobsPlugin, InitGraphicsJobExt, JobComplete, JobError,
 };
 
 fn main() -> AppExit {

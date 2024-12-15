@@ -13,10 +13,10 @@ use bevy_render::{sync_world::RenderEntity, Extract};
 
 /// The priority level of a graphics job.
 ///
-/// Jobs with [`JobPriority::NonCritical`] will be executed in order of priority,
+/// Jobs with [`Priority::NonCritical`] will be executed in order of priority,
 /// from highest to lowest.
 ///
-/// Jobs with [`JobPriority::Critical`] will be executed *during the current frame*.
+/// All jobs with [`Priority::Critical`] will be executed *during the current frame*.
 /// The renderer will wait for all its dependencies to finish and block on pipeline compilation,
 /// which may cause stutter. **USE THIS VARIANT SPARINGLY**
 ///

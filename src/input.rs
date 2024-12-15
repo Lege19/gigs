@@ -51,10 +51,10 @@ pub type JobInputItem<'a, J, In> = <In as JobInput<J>>::Item<'a>;
 
 /// A trait describing input to a graphics job.
 ///
-/// This trait may be thought of as similar to [`QueryData`], but
-/// which also sets more things up behind the scenes. For example,
-/// an implementor may prepare a bind group using data from the
-/// job entity and the [`World`].
+/// This trait may be thought of as similar to [`QueryData`](bevy_ecs::query::QueryData),
+/// but which also sets more things up behind the scenes. For example,
+/// an implementor may prepare a bind group using data from the job
+/// entity and the [`World`].
 ///
 /// Note: while there is no blanket impl for [`JobInput`] for all
 /// [`ReadOnlyQueryData`] types, it *is* implemented for all single
@@ -63,11 +63,18 @@ pub trait JobInput<J: GraphicsJob> {
     type Data: ReadOnlyQueryData;
     type Item<'a>;
 
+    /// a plugin to register on the app, to setup behind the scenes processing
+    /// for this implementor.
     fn plugin() -> impl Plugin {
         |_: &mut App| {}
     }
 
+    /// the status of the resources needed by this job input. For example,
+    /// an implementor may check the status of a queued pipeline, and wait
+    /// until it's done compiling.
     fn status(data: QueryItem<Self::Data>, world: &World) -> JobInputStatus;
+
+    /// returns the actual job input item.
     fn get<'a>(data: QueryItem<'a, Self::Data>, world: &'a World) -> Self::Item<'a>;
 }
 
@@ -225,7 +232,6 @@ fn prepare_job_bind_group<J: GraphicsJob + AsBindGroup>(
     mut commands: Commands,
 ) {
     for (entity, job) in &jobs {
-        //TODO: we should wait instead of fail here, if no bind group was added
         if let Ok(bind_group) = job.as_bind_group(&layout.0, &render_device, &mut param) {
             commands
                 .entity(entity)

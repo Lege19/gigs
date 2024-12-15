@@ -4,6 +4,7 @@ use bevy_ecs::{
     component::Component,
     entity::Entity,
     query::{With, Without},
+    schedule::SystemSet,
     system::{Commands, Local, Query, Res, Resource},
     world::{EntityRef, World},
 };
@@ -16,10 +17,14 @@ use crossbeam_channel::Receiver;
 use crossbeam_channel::Sender;
 use disqualified::ShortName;
 
-use crate::{JobComplete, JobInputStatus, JobMarker, JobPriority};
+use crate::{
+    input::{JobInput, JobInputStatus},
+    meta::JobPriority,
+    JobComplete, JobMarker,
+};
 
 use super::JobExecutionSettings;
-use super::{GraphicsJob, JobError, JobInput};
+use super::{GraphicsJob, JobError};
 
 #[derive(Copy, Clone, Component)]
 pub struct DynamicJob {
@@ -89,6 +94,21 @@ pub fn erase_jobs<J: GraphicsJob>(
             .into_iter()
             .zip(iter::repeat(DynamicJob::new::<J>())),
     );
+}
+
+/// The render-world system sets for graphics jobs
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, SystemSet)]
+pub enum JobSet {
+    /// Various graphics jobs components are setup in this set
+    Setup,
+    /// Graphics jobs are checked to see if they're ready for
+    /// execution in this set
+    Check,
+    /// Graphics jobs are executed in this set.
+    Execute,
+    /// Graphics jobs are cleaned up in this set, and completion
+    /// events are collected and dispatched.
+    Cleanup,
 }
 
 #[derive(Component, Copy, Clone)]

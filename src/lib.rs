@@ -1,17 +1,17 @@
 #![allow(clippy::type_complexity)]
 
 mod ext;
-mod input;
-mod meta;
+pub mod input;
+pub mod meta;
 mod runner;
 use disqualified::ShortName;
 pub use ext::*;
-pub use input::*;
-pub use meta::*;
+use input::{JobInput, JobInputItem};
+use meta::{extract_job_meta, JobMarker};
 use runner::{
     check_job_inputs, erase_jobs, increment_time_out_frames, run_jobs, setup_time_out_frames,
     sync_completed_jobs, sync_completed_jobs_main_world, time_out_jobs, JobResultMainWorldReceiver,
-    JobResultMainWorldSender, JobResultReceiver, JobResultSender,
+    JobResultMainWorldSender, JobResultReceiver, JobResultSender, JobSet,
 };
 
 use core::marker::PhantomData;
@@ -21,7 +21,7 @@ use bevy_ecs::{
     component::Component,
     event::Event,
     query::Added,
-    schedule::{IntoSystemConfigs, IntoSystemSetConfigs, SystemSet},
+    schedule::{IntoSystemConfigs, IntoSystemSetConfigs},
     system::{Commands, Query, Resource},
     world::World,
 };
@@ -124,21 +124,6 @@ impl Plugin for GraphicsJobsPlugin {
             );
         }
     }
-}
-
-/// The render-world system sets for graphics jobs
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, SystemSet)]
-pub enum JobSet {
-    /// Various graphics jobs components are setup in this set
-    Setup,
-    /// Graphics jobs are checked to see if they're ready for
-    /// execution in this set
-    Check,
-    /// Graphics jobs are executed in this set.
-    Execute,
-    /// Graphics jobs are cleaned up in this set, and completion
-    /// events are collected and dispatched.
-    Cleanup,
 }
 
 /// Settings for how jobs are scheduled each frame

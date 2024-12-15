@@ -17,6 +17,7 @@ use bevy_render::{
 };
 
 use gigs::*;
+use input::{JobAsBindGroup, JobComputePipeline, JobInputItem};
 
 fn main() -> AppExit {
     let mut app = App::new();
