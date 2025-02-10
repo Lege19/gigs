@@ -1,6 +1,6 @@
 [package]
 name = "gigs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Emerson Coskey <coskey@emerlabs.net>"]
 categories = ["games", "game-engines", "graphics", "rendering"]
@@ -13,12 +13,10 @@ readme = "README.md"
 exclude = [".github"]
 
 [dependencies]
-bevy_app = "0.15.0"
-bevy_ecs = "0.15.0"
-bevy_render = "0.15.0"
-bevy_utils = "0.15.0"
-crossbeam-channel = "0.5.14"
+bevy_app = "0.15.2"
+bevy_ecs = "0.15.2"
+bevy_render = "0.15.2"
+bevy_utils = "0.15.2"
+crossbeam-channel = "0.5.0"
 disqualified = "1.0.0"
 
-[dev-dependencies]
-bevy = "0.15.0"
