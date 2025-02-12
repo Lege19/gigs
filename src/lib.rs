@@ -60,7 +60,7 @@ use bevy_render::{sync_world::RenderEntity, Extract};
 /// prepared. When they are ready, it will execute and the commands it encodes
 /// will be submitted before the render graph is executed.
 ///
-/// You can also specify a priority for a running job by adding the [`JobPriority`]
+/// You can also specify a priority for a running job by adding the [`JobPriority`](meta::JobPriority)
 /// component when it is spawned.
 ///
 /// Note: you must call [`init_graphics_job`](crate::ext::InitGraphicsJobExt::init_graphics_job)
@@ -150,7 +150,7 @@ impl Plugin for GraphicsJobsPlugin {
 pub struct JobExecutionSettings {
     /// The maximum number of jobs to execute each frame. This number
     /// may be exceeded in the case that a large number of jobs are
-    /// queued with [`Priority::Critical`].
+    /// queued with [`Priority::Critical`](meta::Priority::Critical).
     pub max_jobs_per_frame: u32,
     /// The maximum number of frames a job should wait to execute
     /// before timing out.
